@@ -424,8 +424,8 @@ func (m *Manager) FindMR(idOrBranch string) (*MergeRequest, error) {
 		if constants.BranchPolecatPrefix+idOrBranch == item.MR.Branch {
 			return item.MR, nil
 		}
-		// Match by worker name (partial match for convenience)
-		if strings.Contains(item.MR.ID, idOrBranch) {
+		// Match by ID prefix (partial match for convenience)
+		if strings.HasPrefix(item.MR.ID, idOrBranch) {
 			return item.MR, nil
 		}
 	}
