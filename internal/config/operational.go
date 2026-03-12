@@ -87,6 +87,7 @@ const (
 	DefaultMailBdReadTimeout      = 60 * time.Second
 	DefaultMailBdWriteTimeout     = 60 * time.Second
 	DefaultMailMaxConcurrentAcks  = 8
+	DefaultMailReplyReminderDelay = 30 * time.Second
 )
 
 // Web defaults.
@@ -606,6 +607,15 @@ func (m *MailThresholds) MaxConcurrentAckOpsV() int {
 		return *m.MaxConcurrentAckOps
 	}
 	return DefaultMailMaxConcurrentAcks
+}
+
+// ReplyReminderDelayD returns the configured or default reply reminder delay.
+// A zero duration means reply reminders are disabled.
+func (m *MailThresholds) ReplyReminderDelayD() time.Duration {
+	if m != nil {
+		return ParseDurationOrDefault(m.ReplyReminderDelay, DefaultMailReplyReminderDelay)
+	}
+	return DefaultMailReplyReminderDelay
 }
 
 // --- Web accessors ---

@@ -405,6 +405,11 @@ type MailThresholds struct {
 
 	// MaxConcurrentAckOps is max concurrent mail acknowledge operations (default 8).
 	MaxConcurrentAckOps *int `json:"max_concurrent_ack_ops,omitempty"`
+
+	// ReplyReminderDelay is how long after mail delivery to nudge the recipient
+	// to reply via gt mail send rather than in chat (default "30s").
+	// Set to "0s" to disable reply reminders entirely.
+	ReplyReminderDelay string `json:"reply_reminder_delay,omitempty"`
 }
 
 // WebThresholds configures web API thresholds.
