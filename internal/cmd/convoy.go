@@ -2141,13 +2141,19 @@ func applyFreshIssueDetails(dep *trackedDependency, details *issueDetails) {
 // to bd show and extracts tracked dependencies from the convoy's dependencies
 // array. Then fetches fresh issue details via bd show with prefix routing.
 func getTrackedIssues(townBeads, convoyID string) ([]trackedIssueInfo, error) {
-	// Try bd dep list first — the standard dependency query path.
-	trackedIDs, err := bdDepListTracked(townBeads, convoyID)
+	// Use raw SQL query as primary path — unlike bd dep list, this does NOT
+	// join with the issues table, so it works for cross-database dependencies
+	// where tracked issues live in a different Dolt database. See GH #2624.
+	trackedIDs, err := bdDepListRawIDs(townBeads, convoyID, "down", "tracks")
 	if err != nil {
-		return nil, fmt.Errorf("querying tracked issues for %s: %w", convoyID, err)
+		// Fallback to bd dep list if raw SQL fails (e.g., older bd without sql support).
+		trackedIDs, err = bdDepListTracked(townBeads, convoyID)
+		if err != nil {
+			return nil, fmt.Errorf("querying tracked issues for %s: %w", convoyID, err)
+		}
 	}
 
-	// Fallback: when dep list returns empty (common for cross-database deps),
+	// Fallback: when both raw SQL and dep list return empty,
 	// parse tracked dependencies from bd show output.
 	if len(trackedIDs) == 0 {
 		trackedIDs, err = bdShowTrackedDeps(townBeads, convoyID)

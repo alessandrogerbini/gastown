@@ -111,3 +111,86 @@ esac
 		t.Fatalf("unexpected tracked statuses: %#v", statusByID)
 	}
 }
+
+// TestGetTrackedIssues_RawSQLResolvesCrossDBDeps verifies that getTrackedIssues
+// uses bdDepListRawIDs (raw SQL) as the primary path, which works for
+// cross-database deps where bd dep list returns empty. This is the core
+// fix for GH #gt-7zm where convoys showed 0/0 and auto-closed.
+func TestGetTrackedIssues_RawSQLResolvesCrossDBDeps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, townBeads, _ := makeExternalTrackingTownWorkspace(t)
+	chdirExternalTrackingTest(t, townRoot)
+
+	// Mock bd: sql returns cross-db deps (the working path),
+	// dep list returns empty (the broken path that caused the bug).
+	scriptBody := `
+# Find the subcommand (first non-flag arg)
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
+  sql)
+    # bdDepListRawIDs: raw SQL returns cross-database deps correctly
+    case "$*" in
+      *"issue_id = 'hq-cv-crossdb'"*tracks*)
+        echo '[{"depends_on_id":"external:te:te-xt6"},{"depends_on_id":"external:te:te-zkh"},{"depends_on_id":"external:te:te-dkr"}]'
+        ;;
+      *)
+        echo '[]'
+        ;;
+    esac
+    ;;
+  dep)
+    # bd dep list returns empty for cross-db deps (the bug)
+    echo '[]'
+    ;;
+  show)
+    # Return issue details for batch show
+    echo '[{"id":"te-xt6","title":"Issue 1","status":"open","issue_type":"task"},{"id":"te-zkh","title":"Issue 2","status":"closed","issue_type":"task"},{"id":"te-dkr","title":"Issue 3","status":"open","issue_type":"bug"}]'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	writeExternalTrackingBdStub(t, scriptBody)
+
+	tracked, err := getTrackedIssues(townBeads, "hq-cv-crossdb")
+	if err != nil {
+		t.Fatalf("getTrackedIssues: %v", err)
+	}
+	if len(tracked) != 3 {
+		t.Fatalf("expected 3 tracked issues, got %d", len(tracked))
+	}
+
+	ids := make([]string, len(tracked))
+	for i, item := range tracked {
+		ids[i] = item.ID
+	}
+	sort.Strings(ids)
+	if ids[0] != "te-dkr" || ids[1] != "te-xt6" || ids[2] != "te-zkh" {
+		t.Fatalf("unexpected tracked IDs: %v", ids)
+	}
+
+	statusByID := map[string]string{}
+	for _, item := range tracked {
+		statusByID[item.ID] = item.Status
+	}
+	if statusByID["te-xt6"] != "open" {
+		t.Errorf("te-xt6 status = %q, want open", statusByID["te-xt6"])
+	}
+	if statusByID["te-zkh"] != "closed" {
+		t.Errorf("te-zkh status = %q, want closed", statusByID["te-zkh"])
+	}
+	if statusByID["te-dkr"] != "open" {
+		t.Errorf("te-dkr status = %q, want open", statusByID["te-dkr"])
+	}
+}
