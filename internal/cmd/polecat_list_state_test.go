@@ -45,6 +45,33 @@ func TestEffectivePolecatState(t *testing.T) {
 			},
 			want: polecat.StateIdle,
 		},
+		{
+			name: "session-running-heartbeat-stale-working-becomes-done",
+			item: PolecatListItem{
+				State:          polecat.StateWorking,
+				SessionRunning: true,
+				HeartbeatStale: true,
+			},
+			want: polecat.StateDone,
+		},
+		{
+			name: "session-running-heartbeat-fresh-stays-working",
+			item: PolecatListItem{
+				State:          polecat.StateWorking,
+				SessionRunning: true,
+				HeartbeatStale: false,
+			},
+			want: polecat.StateWorking,
+		},
+		{
+			name: "session-running-heartbeat-stale-done-stays-working",
+			item: PolecatListItem{
+				State:          polecat.StateDone,
+				SessionRunning: true,
+				HeartbeatStale: true,
+			},
+			want: polecat.StateWorking,
+		},
 	}
 
 	for _, tt := range tests {

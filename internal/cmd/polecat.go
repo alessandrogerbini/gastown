@@ -15,6 +15,7 @@ import (
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/rig"
+	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
@@ -380,24 +381,37 @@ func init() {
 
 // PolecatListItem represents a polecat in list output.
 type PolecatListItem struct {
-	Rig            string        `json:"rig"`
-	Name           string        `json:"name"`
-	State          polecat.State `json:"state"`
-	Issue          string        `json:"issue,omitempty"`
-	SessionRunning bool          `json:"session_running"`
-	Zombie         bool          `json:"zombie,omitempty"`
-	SessionName    string        `json:"session_name,omitempty"`
+	Rig            string                  `json:"rig"`
+	Name           string                  `json:"name"`
+	State          polecat.State           `json:"state"`
+	Issue          string                  `json:"issue,omitempty"`
+	SessionRunning bool                    `json:"session_running"`
+	Zombie         bool                    `json:"zombie,omitempty"`
+	SessionName    string                  `json:"session_name,omitempty"`
+	HeartbeatStale bool                    `json:"heartbeat_stale,omitempty"`
+	HeartbeatState polecat.HeartbeatState  `json:"heartbeat_state,omitempty"`
 }
 
 // effectivePolecatState returns the observable state used by polecat list output.
 // Session liveness is ground truth for working/done transitions. Zombie entries
 // are never auto-rewritten.
+//
+// Heartbeat staleness detects idle sessions: when the tmux session is alive but
+// no gt/bd commands have run for SessionHeartbeatStaleThreshold (~3 min), the
+// agent has stopped working (finished and sitting at prompt, or crashed mid-work).
+// This fixes gt-a58: polecats reported as "working" after their Claude session finished.
 func effectivePolecatState(item PolecatListItem) polecat.State {
 	state := item.State
 	if item.SessionRunning && state == polecat.StateDone {
 		return polecat.StateWorking
 	}
 	if !item.SessionRunning && !item.Zombie && state == polecat.StateWorking {
+		return polecat.StateDone
+	}
+	// Session alive but heartbeat stale → agent finished or stuck.
+	// The heartbeat is touched on every gt/bd command; staleness means
+	// no commands for ~3 minutes, indicating the agent is idle at prompt.
+	if item.SessionRunning && item.HeartbeatStale && state == polecat.StateWorking {
 		return polecat.StateDone
 	}
 	return state
@@ -456,14 +470,28 @@ func runPolecatList(cmd *cobra.Command, args []string) error {
 
 		// Track known polecat names from filesystem for zombie detection
 		knownNames := make(map[string]bool)
+		townRoot := filepath.Dir(r.Path)
 		for _, p := range polecats {
 			running, _ := polecatMgr.IsRunning(p.Name)
+
+			// Read heartbeat to detect idle sessions (gt-a58).
+			// A stale heartbeat means no gt/bd commands for ~3 minutes.
+			var hbStale bool
+			var hbState polecat.HeartbeatState
+			sessionName := session.PolecatSessionName(session.PrefixFor(r.Name), p.Name)
+			if hb := polecat.ReadSessionHeartbeat(townRoot, sessionName); hb != nil {
+				hbStale = time.Since(hb.Timestamp) >= polecat.SessionHeartbeatStaleThreshold
+				hbState = hb.EffectiveState()
+			}
+
 			allPolecats = append(allPolecats, PolecatListItem{
 				Rig:            r.Name,
 				Name:           p.Name,
 				State:          p.State,
 				Issue:          p.Issue,
 				SessionRunning: running,
+				HeartbeatStale: hbStale,
+				HeartbeatState: hbState,
 			})
 			knownNames[p.Name] = true
 		}
@@ -632,18 +660,21 @@ func runPolecatRemove(cmd *cobra.Command, args []string) error {
 
 // PolecatStatus represents detailed polecat status for JSON output.
 type PolecatStatus struct {
-	Rig            string        `json:"rig"`
-	Name           string        `json:"name"`
-	State          polecat.State `json:"state"`
-	Issue          string        `json:"issue,omitempty"`
-	ClonePath      string        `json:"clone_path"`
-	Branch         string        `json:"branch"`
-	SessionRunning bool          `json:"session_running"`
-	SessionID      string        `json:"session_id,omitempty"`
-	Attached       bool          `json:"attached,omitempty"`
-	Windows        int           `json:"windows,omitempty"`
-	CreatedAt      string        `json:"created_at,omitempty"`
-	LastActivity   string        `json:"last_activity,omitempty"`
+	Rig            string                  `json:"rig"`
+	Name           string                  `json:"name"`
+	State          polecat.State           `json:"state"`
+	Issue          string                  `json:"issue,omitempty"`
+	ClonePath      string                  `json:"clone_path"`
+	Branch         string                  `json:"branch"`
+	SessionRunning bool                    `json:"session_running"`
+	SessionID      string                  `json:"session_id,omitempty"`
+	Attached       bool                    `json:"attached,omitempty"`
+	Windows        int                     `json:"windows,omitempty"`
+	CreatedAt      string                  `json:"created_at,omitempty"`
+	LastActivity   string                  `json:"last_activity,omitempty"`
+	HeartbeatStale bool                    `json:"heartbeat_stale,omitempty"`
+	HeartbeatState polecat.HeartbeatState  `json:"heartbeat_state,omitempty"`
+	HeartbeatAge   string                  `json:"heartbeat_age,omitempty"`
 }
 
 func runPolecatStatus(cmd *cobra.Command, args []string) error {
@@ -675,12 +706,32 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Read heartbeat for idle detection (gt-a58)
+	townRoot := filepath.Dir(r.Path)
+	sessionName := session.PolecatSessionName(session.PrefixFor(r.Name), polecatName)
+	var hbStale bool
+	var hbState polecat.HeartbeatState
+	var hbAge string
+	if hb := polecat.ReadSessionHeartbeat(townRoot, sessionName); hb != nil {
+		hbStale = time.Since(hb.Timestamp) >= polecat.SessionHeartbeatStaleThreshold
+		hbState = hb.EffectiveState()
+		hbAge = formatActivityTime(hb.Timestamp)
+	}
+
+	// Compute effective state using heartbeat awareness
+	effectiveState := effectivePolecatState(PolecatListItem{
+		State:          p.State,
+		SessionRunning: sessInfo.Running,
+		HeartbeatStale: hbStale,
+		HeartbeatState: hbState,
+	})
+
 	// JSON output
 	if polecatStatusJSON {
 		status := PolecatStatus{
 			Rig:            rigName,
 			Name:           polecatName,
-			State:          p.State,
+			State:          effectiveState,
 			Issue:          p.Issue,
 			ClonePath:      p.ClonePath,
 			Branch:         p.Branch,
@@ -688,6 +739,9 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 			SessionID:      sessInfo.SessionID,
 			Attached:       sessInfo.Attached,
 			Windows:        sessInfo.Windows,
+			HeartbeatStale: hbStale,
+			HeartbeatState: hbState,
+			HeartbeatAge:   hbAge,
 		}
 		if !sessInfo.Created.IsZero() {
 			status.CreatedAt = sessInfo.Created.Format("2006-01-02 15:04:05")
@@ -703,9 +757,9 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 	// Human-readable output
 	fmt.Printf("%s\n\n", style.Bold.Render(fmt.Sprintf("Polecat: %s/%s", rigName, polecatName)))
 
-	// State with color
-	stateStr := string(p.State)
-	switch p.State {
+	// State with color (use effective state)
+	stateStr := string(effectiveState)
+	switch effectiveState {
 	case polecat.StateWorking:
 		stateStr = style.Info.Render(stateStr)
 	case polecat.StateStuck:
@@ -759,6 +813,22 @@ func runPolecatStatus(cmd *cobra.Command, args []string) error {
 		}
 	} else {
 		fmt.Printf("  Status:        %s\n", style.Dim.Render("not running"))
+	}
+
+	// Heartbeat info
+	if hbState != "" {
+		fmt.Println()
+		fmt.Printf("%s\n", style.Bold.Render("Heartbeat"))
+		hbStateStr := string(hbState)
+		if hbStale {
+			hbStateStr = style.Warning.Render(hbStateStr + " (stale)")
+		} else {
+			hbStateStr = style.Success.Render(hbStateStr)
+		}
+		fmt.Printf("  State:         %s\n", hbStateStr)
+		if hbAge != "" {
+			fmt.Printf("  Last Beat:     %s\n", style.Dim.Render(hbAge))
+		}
 	}
 
 	return nil
