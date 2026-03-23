@@ -219,7 +219,7 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 			"--id=" + id,
 			"--title=" + title,
 			"--description=" + description,
-			"--type=agent",
+			"--type=task",
 			"--labels=gt:agent",
 		}
 		if NeedsForceForID(id) {
@@ -339,9 +339,9 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 	if err := target.Update(id, updateOpts); err != nil {
 		return nil, fmt.Errorf("updating agent bead: %w", err)
 	}
-	// Fix type separately — UpdateOptions doesn't support type changes
-	if _, err := target.run("update", id, "--type=agent"); err != nil {
-		return nil, fmt.Errorf("fixing agent bead type: %w", err)
+	// Ensure gt:agent label is present (type=task for upstream bd compatibility)
+	if _, err := target.run("update", id, "--add-label=gt:agent"); err != nil {
+		_ = err // Non-fatal: label may already exist
 	}
 
 	// Note: role slot no longer set - role definitions are config-based
@@ -416,25 +416,36 @@ func (b *Beads) ResetAgentBeadForReuse(id, reason string) error {
 }
 
 // UpdateAgentState updates the agent_state field in an agent bead.
-// Uses `bd agent state` command for the database column directly,
-// then syncs the description's agent_state field to match (gt-ulom).
+// Uses direct SQL to avoid dependency on bd agent subcommand
+// (removed from upstream beads in 0bd598ce). Also syncs the
+// description's agent_state field to match (gt-ulom).
 func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 	defer func() { telemetry.RecordAgentStateChange(context.Background(), id, state, nil, retErr) }()
-	// Update agent state using bd agent state command
-	// Use runWithRouting so bd can resolve cross-prefix agent beads (e.g., wa-*
-	// agent beads from hq context) via routes.jsonl instead of BEADS_DIR.
-	_, err := b.runWithRouting("agent", "state", id, state)
+	// Update agent_state and last_activity via direct SQL.
+	query := fmt.Sprintf(
+		"UPDATE wisps SET agent_state='%s', last_activity=NOW() WHERE id='%s'",
+		sanitizeSQL(state), sanitizeSQL(id))
+	_, err := b.runWithRouting("sql", query)
 	if err != nil {
-		return fmt.Errorf("updating agent state: %w", err)
+		// Fallback: try issues table (agent bead may not be ephemeral)
+		queryIssues := fmt.Sprintf(
+			"UPDATE issues SET agent_state='%s', last_activity=NOW() WHERE id='%s'",
+			sanitizeSQL(state), sanitizeSQL(id))
+		_, err = b.runWithRouting("sql", queryIssues)
+		if err != nil {
+			return fmt.Errorf("updating agent state: %w", err)
+		}
 	}
 
 	// Sync the description's agent_state field with the column (gt-ulom).
-	// Without this, the description stays stale (e.g., "spawning" after the
-	// column transitions to "working"), causing bd show and dashboards to
-	// display incorrect state after idle polecat reuse via gt sling.
 	_ = b.UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
 
 	return nil
+}
+
+// sanitizeSQL escapes single quotes for SQL string literals.
+func sanitizeSQL(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // SetHookBead and ClearHookBead removed (hq-l6mm5).

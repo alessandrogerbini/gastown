@@ -30,7 +30,7 @@ func TestRoleEmoji(t *testing.T) {
 
 func TestBeadsCustomTypesList(t *testing.T) {
 	types := BeadsCustomTypesList()
-	expected := []string{"agent", "role", "rig", "convoy", "slot", "queue", "event", "message", "molecule", "gate", "merge-request"}
+	expected := []string{"role", "rig", "convoy", "slot", "queue", "event", "message", "molecule", "gate", "merge-request"}
 
 	if len(types) != len(expected) {
 		t.Fatalf("BeadsCustomTypesList() returned %d items, want %d", len(types), len(expected))

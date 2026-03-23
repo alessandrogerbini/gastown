@@ -1171,10 +1171,12 @@ func updateAgentBeadState(townRoot, agent, state, _ string) { // reason unused b
 		return
 	}
 
-	// Use bd agent state command
-	cmd := exec.Command("bd", "agent", "state", beadID, state)
-	cmd.Dir = townRoot
-	_ = cmd.Run() // Best effort
+	// Update agent state via direct SQL (bd agent subcommand removed upstream)
+	query := fmt.Sprintf("UPDATE wisps SET agent_state='%s', last_activity=NOW() WHERE id='%s'",
+		strings.ReplaceAll(state, "'", "''"), strings.ReplaceAll(beadID, "'", "''"))
+	sqlCmd := exec.Command("bd", "sql", query)
+	sqlCmd.Dir = townRoot
+	_ = sqlCmd.Run() // Best effort
 }
 
 // runDeaconStaleHooks finds and unhooks stale hooked beads.

@@ -404,8 +404,11 @@ func parseIntSimple(s string) (int, error) {
 
 // updateAgentHeartbeat updates the last_activity timestamp on an agent bead.
 // This proves the agent is alive and processing signals.
+// Uses direct SQL (bd agent subcommand removed from upstream beads).
 func updateAgentHeartbeat(agentBead, beadsDir string) error {
-	cmd := exec.Command("bd", "agent", "heartbeat", agentBead)
+	query := fmt.Sprintf("UPDATE wisps SET last_activity=NOW() WHERE id='%s'",
+		strings.ReplaceAll(agentBead, "'", "''"))
+	cmd := exec.Command("bd", "sql", query)
 	cmd.Env = append(os.Environ(), "BEADS_DIR="+beadsDir)
 	return cmd.Run()
 }
