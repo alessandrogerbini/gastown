@@ -431,6 +431,21 @@ func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 	// agent beads from hq context) via routes.jsonl instead of BEADS_DIR.
 	_, err := b.runWithRouting("set-state", id, "agent_state="+state)
 	if err != nil {
+		// FK violation (Error 1452 on fk_counter_parent) means the parent issue
+		// row doesn't exist in the issues table. This happens when bd set-state
+		// (via routing) targets a database where the agent bead wasn't created,
+		// or the create hasn't been committed yet (gt-ji4). Create a minimal
+		// agent bead as the parent row and retry.
+		if isFKViolation(err) {
+			if createErr := b.ensureAgentBeadForState(id); createErr != nil {
+				return fmt.Errorf("updating agent state: FK violation and could not create parent issue %s: %w (original: %v)", id, createErr, err)
+			}
+			if _, retryErr := b.runWithRouting("set-state", id, "agent_state="+state); retryErr != nil {
+				return fmt.Errorf("updating agent state after creating parent: %w", retryErr)
+			}
+			_ = b.UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
+			return nil
+		}
 		return fmt.Errorf("updating agent state: %w", err)
 	}
 
@@ -440,6 +455,43 @@ func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 	// display incorrect state after idle polecat reuse via gt sling.
 	_ = b.UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
 
+	return nil
+}
+
+// isFKViolation returns true if the error is a MySQL/Dolt foreign key violation
+// (Error 1452). This occurs when bd set-state tries to insert a counter row
+// referencing a non-existent parent issue.
+func isFKViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "1452") || strings.Contains(s, "fk_counter_parent")
+}
+
+// ensureAgentBeadForState ensures an agent bead exists so that bd set-state
+// can satisfy the FK constraint on the counters table. If the bead already
+// exists, this is a no-op. If it doesn't exist, creates a minimal agent bead.
+func (b *Beads) ensureAgentBeadForState(id string) error {
+	_, err := b.Show(id)
+	if err == nil {
+		return nil // Already exists
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err // Unexpected error
+	}
+	// Create a minimal agent bead to satisfy the FK constraint.
+	// The caller (typically SetAgentState) will update fields later.
+	_, createErr := b.CreateAgentBead(id, id, &AgentFields{
+		RoleType: "polecat",
+	})
+	if createErr != nil {
+		// If create fails because it already exists (race with concurrent create),
+		// that's fine — the parent row now exists.
+		if !strings.Contains(createErr.Error(), "UNIQUE") && !strings.Contains(createErr.Error(), "already exists") {
+			return createErr
+		}
+	}
 	return nil
 }
 

@@ -1,6 +1,7 @@
 package beads
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -210,4 +211,47 @@ func TestMergeAgentBeadSources(t *testing.T) {
 			t.Fatalf("len(merged) = %d, want 0", len(merged))
 		}
 	})
+}
+
+func TestIsFKViolation(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "unrelated error",
+			err:  fmt.Errorf("connection refused"),
+			want: false,
+		},
+		{
+			name: "Error 1452 FK violation",
+			err:  fmt.Errorf("bd set-state: Error 1452 (HY000): Cannot add or update a child row: a foreign key constraint fails"),
+			want: true,
+		},
+		{
+			name: "fk_counter_parent in error",
+			err:  fmt.Errorf("bd set-state: fk_counter_parent constraint violated"),
+			want: true,
+		},
+		{
+			name: "wrapped FK violation",
+			err:  fmt.Errorf("updating agent state: %w", fmt.Errorf("Error 1452 (HY000)")),
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isFKViolation(tt.err)
+			if got != tt.want {
+				t.Errorf("isFKViolation(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
+	}
 }
