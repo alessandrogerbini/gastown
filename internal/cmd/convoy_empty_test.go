@@ -178,7 +178,7 @@ done
 
 case "$pos0" in
   list)
-    echo '[{"id":"hq-empty-mix","title":"Empty convoy"},{"id":"hq-feed-mix","title":"Feedable convoy"}]'
+    echo '[{"id":"hq-empty-mix","title":"Empty convoy","issue_type":"convoy"},{"id":"hq-feed-mix","title":"Feedable convoy","issue_type":"convoy"}]'
     exit 0
     ;;
   sql)

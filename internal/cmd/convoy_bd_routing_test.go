@@ -90,24 +90,27 @@ func TestRunConvoyList_UsesTownRootAndStripsBeadsDir(t *testing.T) {
 	chdirConvoyTest(t, townRoot)
 	t.Setenv("BEADS_DIR", "/wrong/.beads")
 
+	expectedBeadsDir := filepath.Join(expectedWD, ".beads")
 	scriptBody := fmt.Sprintf(`
 # Allow-stale version probe is exempt from BEADS_DIR check.
 if [ "$*" = "--allow-stale version" ]; then
   exit 0
 fi
 
-if [ -n "$BEADS_DIR" ]; then
-  echo "BEADS_DIR leaked: $BEADS_DIR" >&2
+# runBdJSON now sets BEADS_DIR to the resolved beads directory (gt-8c0).
+# Verify it's set to the correct path (not the inherited /wrong/.beads).
+if [ "$BEADS_DIR" != "%s" ]; then
+  echo "expected BEADS_DIR=%s, got $BEADS_DIR" >&2
   exit 1
 fi
 
 case "$*" in
-  "list --type=convoy --json --all")
+  "list --all --json")
     if [ "$PWD" != "%s" ]; then
       echo "expected town root, got $PWD" >&2
       exit 1
     fi
-    echo '[{"id":"hq-cv-town","title":"Town convoy","status":"open","created_at":"2026-03-09T00:00:00Z"}]'
+    echo '[{"id":"hq-cv-town","title":"Town convoy","status":"open","issue_type":"convoy","created_at":"2026-03-09T00:00:00Z"}]'
     ;;
   "dep list hq-cv-town --direction=down --type=tracks --allow-stale --json")
     if [ "$PWD" != "%s" ]; then
@@ -128,7 +131,7 @@ case "$*" in
     exit 1
     ;;
 esac
-`, expectedWD, expectedWD, expectedWD)
+`, expectedBeadsDir, expectedBeadsDir, expectedWD, expectedWD, expectedWD)
 	writeRoutingBdStub(t, scriptBody)
 
 	oldJSON, oldAll, oldStatus, oldTree := convoyListJSON, convoyListAll, convoyListStatus, convoyListTree
@@ -154,7 +157,7 @@ esac
 	}
 }
 
-func TestRunConvoyStatus_UsesTownRootAndStripsBeadsDir(t *testing.T) {
+func TestRunConvoyStatus_UsesTownRootAndSetsBeadsDir(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows - shell stubs")
 	}
@@ -163,14 +166,16 @@ func TestRunConvoyStatus_UsesTownRootAndStripsBeadsDir(t *testing.T) {
 	chdirConvoyTest(t, townRoot)
 	t.Setenv("BEADS_DIR", "/wrong/.beads")
 
+	expectedBeadsDir := filepath.Join(expectedWD, ".beads")
 	scriptBody := fmt.Sprintf(`
 # Allow-stale version probe is exempt from BEADS_DIR check.
 if [ "$*" = "--allow-stale version" ]; then
   exit 0
 fi
 
-if [ -n "$BEADS_DIR" ]; then
-  echo "BEADS_DIR leaked: $BEADS_DIR" >&2
+# runBdJSON now sets BEADS_DIR to the resolved beads directory (gt-8c0).
+if [ "$BEADS_DIR" != "%s" ]; then
+  echo "expected BEADS_DIR=%s, got $BEADS_DIR" >&2
   exit 1
 fi
 
@@ -194,7 +199,7 @@ case "$*" in
     exit 1
     ;;
 esac
-`, expectedWD, expectedWD)
+`, expectedBeadsDir, expectedBeadsDir, expectedWD, expectedWD)
 	writeRoutingBdStub(t, scriptBody)
 
 	oldJSON := convoyStatusJSON

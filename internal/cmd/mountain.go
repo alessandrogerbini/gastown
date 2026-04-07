@@ -563,7 +563,7 @@ func showMountainDetail(townBeads, inputID string) error {
 
 // findMountainConvoys lists all open convoys with the mountain label.
 func findMountainConvoys(townBeads string) ([]mountainConvoyInfo, error) {
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--label=mountain", "--json")
+	out, err := runBdConvoyListJSON(townBeads, "--status=open", "--label=mountain")
 	if err != nil {
 		return nil, fmt.Errorf("listing mountain convoys: %w", err)
 	}

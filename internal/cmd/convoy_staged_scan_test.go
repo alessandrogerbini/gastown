@@ -186,7 +186,9 @@ exit 0
 		t.Fatalf("bd was never called with a 'list' subcommand; log: %q", string(logData))
 	}
 
-	requiredFlags := []string{"list", "--type=convoy", "--status=open", "--json"}
+	// runBdConvoyListJSON uses --all --json and filters by issue_type in Go (gt-8c0).
+	// --status=open is passed by findStrandedConvoys.
+	requiredFlags := []string{"list", "--all", "--status=open", "--json"}
 	for _, flag := range requiredFlags {
 		if !strings.Contains(listLine, flag) {
 			t.Errorf("bd list command missing %q; got: %q", flag, listLine)

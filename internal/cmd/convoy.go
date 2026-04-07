@@ -439,8 +439,10 @@ func getTownBeadsDir() (string, error) {
 
 // runBdJSON runs a bd command, captures stdout as JSON output. If the command
 // fails, the error includes bd's stderr for diagnostics instead of a bare
-// "exit status 1". BEADS_DIR is stripped from the subprocess environment to
-// prevent stale overrides from interfering with bd's workspace detection.
+// "exit status 1". BEADS_DIR is set to the resolved beads directory to ensure
+// bd connects to the correct database (including Dolt server mode). Without
+// explicit BEADS_DIR, bd's CWD-based discovery may use the wrong backend when
+// a .beads directory has mixed JSONL/Dolt configuration (gt-8c0).
 func runBdJSON(dir string, args ...string) ([]byte, error) {
 	// Strip --allow-stale if bd doesn't support it (version mismatch).
 	if !beads.BdSupportsAllowStale() {
@@ -454,9 +456,12 @@ func runBdJSON(dir string, args ...string) ([]byte, error) {
 	}
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
-	// Strip BEADS_DIR so bd discovers the correct database from cmd.Dir
-	// rather than using an inherited (possibly wrong) override.
-	cmd.Env = stripEnvKey(os.Environ(), "BEADS_DIR")
+	// Strip inherited BEADS_DIR, then set it to the resolved beads directory.
+	// ResolveBeadsDir follows .beads/redirect chains to find the actual database
+	// directory, ensuring bd uses the correct Dolt server connection.
+	resolved := beads.ResolveBeadsDir(dir)
+	env := stripEnvKey(os.Environ(), "BEADS_DIR")
+	cmd.Env = append(env, "BEADS_DIR="+resolved)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -468,6 +473,52 @@ func runBdJSON(dir string, args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("bd %s: %w", args[0], err)
 	}
 	return stdout.Bytes(), nil
+}
+
+// runBdConvoyListJSON runs a bd list query filtered to convoy-type issues.
+// Instead of using --type=convoy (which fails in certain workspace configurations
+// due to bd's CWD-dependent type validation — see gt-8c0), this function runs
+// bd list --all and filters the results to issue_type=="convoy" in Go.
+//
+// The --all flag is required because bd's default list output excludes convoy
+// and other infrastructure types. The caller's extraArgs can further narrow
+// results (e.g., "--status=open", "--label=mountain"). Do NOT pass "--type=convoy"
+// or "--all" in extraArgs — they are handled internally.
+func runBdConvoyListJSON(dir string, extraArgs ...string) ([]byte, error) {
+	// --all ensures convoy-type issues are included in the output.
+	// Without it, bd list excludes convoy from default results.
+	args := []string{"list", "--all", "--json"}
+	args = append(args, extraArgs...)
+
+	out, err := runBdJSON(dir, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse all issues and filter to convoy type.
+	var allIssues []json.RawMessage
+	if err := json.Unmarshal(out, &allIssues); err != nil {
+		return nil, fmt.Errorf("parsing issue list: %w", err)
+	}
+
+	var convoys []json.RawMessage
+	for _, raw := range allIssues {
+		var peek struct {
+			IssueType string `json:"issue_type"`
+		}
+		if err := json.Unmarshal(raw, &peek); err != nil {
+			continue
+		}
+		if peek.IssueType == "convoy" {
+			convoys = append(convoys, raw)
+		}
+	}
+
+	// Return a valid JSON array (empty [] not null).
+	if convoys == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(convoys)
 }
 
 // bdDepListRawIDs queries the raw dependencies table via bd sql to get
@@ -1496,7 +1547,7 @@ func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 	stranded := []strandedConvoyInfo{} // Initialize as empty slice for proper JSON encoding
 
 	// List all open convoys
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--json")
+	out, err := runBdConvoyListJSON(townBeads, "--status=open")
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
@@ -1666,7 +1717,7 @@ func checkAndCloseCompletedConvoys(townBeads string, dryRun bool) ([]struct{ ID,
 	var closed []struct{ ID, Title string }
 
 	// List all open convoys
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--json")
+	out, err := runBdConvoyListJSON(townBeads, "--status=open")
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
@@ -1927,7 +1978,7 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 
 func showAllConvoyStatus(townBeads string) error {
 	// List all convoy-type issues
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--json")
+	out, err := runBdConvoyListJSON(townBeads, "--status=open")
 	if err != nil {
 		return fmt.Errorf("listing convoys: %w", err)
 	}
@@ -1973,16 +2024,21 @@ func runConvoyList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// List convoy-type issues.
-	listArgs := []string{"list", "--type=convoy", "--json"}
+	// List convoy-type issues. Uses runBdConvoyListJSON to avoid --type=convoy
+	// which fails in certain workspace configurations (gt-8c0).
+	// runBdConvoyListJSON always passes --all to include convoy types, so we
+	// must explicitly pass --status to filter by status (the --all flag
+	// overrides bd's default open-only filter).
+	var extraArgs []string
 	if convoyListStatus != "" {
-		listArgs = append(listArgs, "--status="+convoyListStatus)
-	} else if convoyListAll {
-		listArgs = append(listArgs, "--all")
+		extraArgs = append(extraArgs, "--status="+convoyListStatus)
+	} else if !convoyListAll {
+		// Default: show only open convoys (bd's --all overrides the default
+		// open-only filter, so we restore it explicitly).
+		extraArgs = append(extraArgs, "--status=open")
 	}
-	// bd no longer requires --flat for JSON output.
 
-	out, err := runBdJSON(townBeads, listArgs...)
+	out, err := runBdConvoyListJSON(townBeads, extraArgs...)
 	if err != nil {
 		return fmt.Errorf("listing convoys: %w", err)
 	}
@@ -2718,8 +2774,8 @@ func runConvoyTUI() error {
 // resolveConvoyNumber converts a numeric shortcut (1, 2, 3...) to a convoy ID.
 // Numbers correspond to the order shown in 'gt convoy list'.
 func resolveConvoyNumber(townBeads string, n int) (string, error) {
-	// Get convoy list (same query as runConvoyList)
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--json")
+	// Get convoy list (same query as runConvoyList default: open only)
+	out, err := runBdConvoyListJSON(townBeads, "--status=open")
 	if err != nil {
 		return "", fmt.Errorf("listing convoys: %w", err)
 	}

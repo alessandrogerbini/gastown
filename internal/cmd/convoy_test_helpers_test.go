@@ -298,9 +298,11 @@ func (d *testDAG) BdStubScript() string {
 	sb.WriteString("    exit 0\n")
 	sb.WriteString("    ;;\n")
 
-	// --- handle: list --type=convoy --all --json (overlapping convoy detection) ---
+	// --- handle: list --all --json (convoy listing via runBdConvoyListJSON) ---
+	// runBdConvoyListJSON queries with --all --json and filters to convoy type in Go.
+	// The stub returns only convoy-type issues since that's what callers expect after filtering.
 	convoyListJSON := d.convoyListJSON()
-	sb.WriteString("  list\\ *--type=convoy*)\n")
+	sb.WriteString("  list\\ *--all*--json*)\n")
 	sb.WriteString(fmt.Sprintf("    echo '%s'\n", convoyListJSON))
 	sb.WriteString("    exit 0\n")
 	sb.WriteString("    ;;\n")
@@ -605,12 +607,14 @@ func (d *testDAG) trackersSQLJSONFor(beadID string) string {
 	return string(raw)
 }
 
-// convoyListJSON returns the JSON array for `bd list --type=convoy --all --json`.
-// Returns all convoy-type beads with their ID and status.
+// convoyListJSON returns the JSON array for convoy listing queries.
+// Returns all convoy-type beads with their ID, status, and issue_type.
+// The issue_type field is included so runBdConvoyListJSON's Go filter works.
 func (d *testDAG) convoyListJSON() string {
 	type convoyEntry struct {
-		ID     string `json:"id"`
-		Status string `json:"status"`
+		ID        string `json:"id"`
+		Status    string `json:"status"`
+		IssueType string `json:"issue_type"`
 	}
 
 	var out []convoyEntry
@@ -620,7 +624,7 @@ func (d *testDAG) convoyListJSON() string {
 			if status == "" {
 				status = "open"
 			}
-			out = append(out, convoyEntry{ID: b.ID, Status: status})
+			out = append(out, convoyEntry{ID: b.ID, Status: status, IssueType: "convoy"})
 		}
 	}
 	if out == nil {

@@ -67,11 +67,9 @@ func isTrackedByConvoy(beadID string) string {
 func findConvoyByDescription(townRoot, beadID string) string {
 	townBeads := filepath.Join(townRoot, ".beads")
 
-	// Query all open convoys from HQ
-	listCmd := exec.Command("bd", "list", "--type=convoy", "--status=open", "--json")
-	listCmd.Dir = townBeads
-
-	out, err := listCmd.Output()
+	// Query all open convoys from HQ. Uses runBdConvoyListJSON to avoid
+	// --type=convoy which fails in certain workspace configurations (gt-8c0).
+	out, err := runBdConvoyListJSON(townRoot, "--status=open")
 	if err != nil {
 		return ""
 	}

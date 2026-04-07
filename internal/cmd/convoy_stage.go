@@ -528,8 +528,8 @@ func findOverlappingConvoys(slingableIDs []string) ([]overlappingConvoy, error) 
 		return nil, err
 	}
 
-	// List all convoys (--all includes every status).
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--all", "--json")
+	// List all convoys (runBdConvoyListJSON already passes --all internally).
+	out, err := runBdConvoyListJSON(townBeads)
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}

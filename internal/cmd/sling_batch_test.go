@@ -1447,7 +1447,7 @@ fi
 shift || true
 case "$cmd" in
   list)
-    echo '[{"id":"hq-cv-match1","description":"Auto-created convoy tracking gt-abc"}]'
+    echo '[{"id":"hq-cv-match1","description":"Auto-created convoy tracking gt-abc","issue_type":"convoy"}]'
     exit 0
     ;;
 esac
@@ -1484,7 +1484,7 @@ fi
 shift || true
 case "$cmd" in
   list)
-    echo '[{"id":"hq-cv-other","description":"Auto-created convoy tracking gt-other"}]'
+    echo '[{"id":"hq-cv-other","description":"Auto-created convoy tracking gt-other","issue_type":"convoy"}]'
     exit 0
     ;;
   dep)
@@ -1526,7 +1526,7 @@ fi
 shift || true
 case "$cmd" in
   list)
-    echo '[{"id":"hq-cv-manual","description":"Manually created convoy"}]'
+    echo '[{"id":"hq-cv-manual","description":"Manually created convoy","issue_type":"convoy"}]'
     exit 0
     ;;
   sql)
