@@ -67,8 +67,9 @@ func isTrackedByConvoy(beadID string) string {
 func findConvoyByDescription(townRoot, beadID string) string {
 	townBeads := filepath.Join(townRoot, ".beads")
 
-	// Query all open convoys from HQ
-	listCmd := exec.Command("bd", "list", "--type=convoy", "--status=open", "--json")
+	// Query all open convoys from HQ via SQL (bd list --type=convoy fails validation).
+	listArgs := beads.ConvoyListSQLArgs("open", false, "")
+	listCmd := exec.Command("bd", listArgs...) //nolint:gosec // G204: args from internal helper
 	listCmd.Dir = townBeads
 
 	out, err := listCmd.Output()
@@ -326,7 +327,7 @@ func createBatchConvoy(beadIDs []string, rigName string, owned bool, mergeStrate
 
 	createArgs := []string{
 		"create",
-		"--type=convoy",
+		"--type=task",
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
@@ -342,6 +343,11 @@ func createBatchConvoy(beadIDs []string, rigName string, owned bool, mergeStrate
 	// gt sling has set BD_DOLT_AUTO_COMMIT=off globally (gt-9xum2 root cause fix).
 	if out, err := BdCmd(createArgs...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
 		return "", nil, fmt.Errorf("creating batch convoy: %w\noutput: %s", err, out)
+	}
+
+	// Fix issue_type to 'convoy' via SQL (bd create rejects --type=convoy).
+	if out, err := BdCmd(beads.ConvoyCreateFixType(convoyID)...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
+		return "", nil, fmt.Errorf("setting convoy type: %w\noutput: %s", err, out)
 	}
 
 	// Add tracking relations for all beads, recording which succeed.
@@ -392,7 +398,7 @@ func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy, baseB
 
 	createArgs := []string{
 		"create",
-		"--type=convoy",
+		"--type=task",
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
@@ -408,6 +414,11 @@ func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy, baseB
 	// gt sling has set BD_DOLT_AUTO_COMMIT=off globally (gt-9xum2 root cause fix).
 	if out, err := BdCmd(createArgs...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
 		return "", fmt.Errorf("creating convoy: %w\noutput: %s", err, out)
+	}
+
+	// Fix issue_type to 'convoy' via SQL (bd create rejects --type=convoy).
+	if out, err := BdCmd(beads.ConvoyCreateFixType(convoyID)...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
+		return "", fmt.Errorf("setting convoy type: %w\noutput: %s", err, out)
 	}
 
 	// Add tracking relation: convoy tracks the issue.

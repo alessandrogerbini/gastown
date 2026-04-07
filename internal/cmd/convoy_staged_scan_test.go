@@ -130,9 +130,9 @@ exit 0
 	}
 }
 
-// TestStrandedScanQueryShape verifies the exact arguments passed to bd
-// by findStrandedConvoys, ensuring the --type=convoy and --status=open
-// flags are both present. This guards against flag drift in refactors.
+// TestStrandedScanQueryShape verifies the arguments passed to bd
+// by findStrandedConvoys use SQL with issue_type='convoy' and status='open'.
+// This guards against flag drift in refactors.
 func TestStrandedScanQueryShape(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on windows — shell stub")
@@ -169,27 +169,27 @@ exit 0
 		t.Fatalf("reading bd.log: %v", err)
 	}
 
-	// Find the list command line — bd may emit a version probe first.
+	// Find the SQL query line — convoy listing now uses bd sql instead of bd list.
 	lines := strings.Split(strings.TrimSpace(string(logData)), "\n")
 	if len(lines) == 0 {
 		t.Fatal("bd was never called")
 	}
 
-	var listLine string
+	var sqlLine string
 	for _, line := range lines {
-		if strings.Contains(line, "list") {
-			listLine = line
+		if strings.Contains(line, "sql") {
+			sqlLine = line
 			break
 		}
 	}
-	if listLine == "" {
-		t.Fatalf("bd was never called with a 'list' subcommand; log: %q", string(logData))
+	if sqlLine == "" {
+		t.Fatalf("bd was never called with a 'sql' subcommand; log: %q", string(logData))
 	}
 
-	requiredFlags := []string{"list", "--type=convoy", "--status=open", "--json"}
-	for _, flag := range requiredFlags {
-		if !strings.Contains(listLine, flag) {
-			t.Errorf("bd list command missing %q; got: %q", flag, listLine)
+	requiredParts := []string{"sql", "--json", "issue_type = 'convoy'", "status = 'open'"}
+	for _, part := range requiredParts {
+		if !strings.Contains(sqlLine, part) {
+			t.Errorf("bd sql command missing %q; got: %q", part, sqlLine)
 		}
 	}
 }

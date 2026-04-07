@@ -528,8 +528,8 @@ func findOverlappingConvoys(slingableIDs []string) ([]overlappingConvoy, error) 
 		return nil, err
 	}
 
-	// List all convoys (--all includes every status).
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--all", "--json")
+	// List all convoys (all statuses) via SQL (bd list --type=convoy fails validation).
+	out, err := runBdJSON(townBeads, beads.ConvoyListSQLArgs("", true, "")...)
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
@@ -713,7 +713,7 @@ func createStagedConvoy(dag *ConvoyDAG, waves []Wave, status string, title strin
 	// Create the convoy via bd create in town beads, then set status via bd update.
 	createArgs := []string{
 		"create",
-		"--type=convoy",
+		"--type=task",
 		"--id=" + convoyID,
 		"--title=" + title,
 		"--description=" + description,
@@ -723,6 +723,11 @@ func createStagedConvoy(dag *ConvoyDAG, waves []Wave, status string, title strin
 	}
 	if out, err := BdCmd(createArgs...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
 		return "", fmt.Errorf("bd create convoy: %w\noutput: %s", err, out)
+	}
+
+	// Fix issue_type to 'convoy' via SQL (bd create rejects --type=convoy).
+	if out, err := BdCmd(beads.ConvoyCreateFixType(convoyID)...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
+		return "", fmt.Errorf("setting convoy type: %w\noutput: %s", err, out)
 	}
 
 	// Set the staged status.

@@ -1871,8 +1871,9 @@ type convoyInfo struct {
 // checkAndCloseCompletedConvoys finds and closes convoys where all tracked issues
 // are complete. Returns the list of convoys that were closed.
 func (e *Engineer) checkAndCloseCompletedConvoys(townRoot, townBeads string) []convoyInfo {
-	// List all open convoys
-	listCmd := exec.Command("bd", "list", "--type=convoy", "--status=open", "--json")
+	// List all open convoys via SQL (bd list --type=convoy fails validation).
+	listArgs := beads.ConvoyListSQLArgs("open", false, "")
+	listCmd := exec.Command("bd", listArgs...) //nolint:gosec // G204: args from internal helper
 	util.SetDetachedProcessGroup(listCmd)
 	listCmd.Dir = townBeads
 	var stdout bytes.Buffer

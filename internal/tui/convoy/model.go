@@ -91,9 +91,9 @@ func loadConvoys(townBeads string) ([]ConvoyItem, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), constants.BdSubprocessTimeout)
 	defer cancel()
 
-	// Get list of open convoys
-	listArgs := []string{"list", "--type=convoy", "--json"}
-	listCmd := exec.CommandContext(ctx, "bd", listArgs...)
+	// Get list of open convoys via SQL (bd list --type=convoy fails validation).
+	listArgs := beads.ConvoyListSQLArgs("", false, "")
+	listCmd := exec.CommandContext(ctx, "bd", listArgs...) //nolint:gosec // G204: args from internal helper
 	util.SetDetachedProcessGroup(listCmd)
 	listCmd.Dir = townBeads
 	var stdout bytes.Buffer

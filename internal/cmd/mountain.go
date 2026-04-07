@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/workspace"
 )
 
@@ -563,7 +564,7 @@ func showMountainDetail(townBeads, inputID string) error {
 
 // findMountainConvoys lists all open convoys with the mountain label.
 func findMountainConvoys(townBeads string) ([]mountainConvoyInfo, error) {
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--label=mountain", "--json")
+	out, err := runBdJSON(townBeads, beads.ConvoyListSQLArgs("open", false, "mountain")...)
 	if err != nil {
 		return nil, fmt.Errorf("listing mountain convoys: %w", err)
 	}

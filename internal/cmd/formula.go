@@ -463,7 +463,7 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 
 	createArgs := []string{
 		"create",
-		"--type=convoy",
+		"--type=task",
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
@@ -477,6 +477,13 @@ func executeConvoyFormula(f *formula.Formula, formulaName, targetRig string) err
 	createCmd.Stderr = os.Stderr
 	if err := createCmd.Run(); err != nil {
 		return fmt.Errorf("creating convoy bead: %w", err)
+	}
+
+	// Fix issue_type to 'convoy' via SQL (bd create rejects --type=convoy).
+	fixCmd := exec.Command("bd", beads.ConvoyCreateFixType(convoyID)...)
+	fixCmd.Dir = townBeads
+	if err := fixCmd.Run(); err != nil {
+		return fmt.Errorf("setting convoy type: %w", err)
 	}
 
 	fmt.Printf("%s Created convoy: %s\n", style.Bold.Render("✓"), convoyID)
@@ -753,7 +760,7 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 
 	createArgs := []string{
 		"create",
-		"--type=convoy", // reuse convoy type for workflow tracking
+		"--type=task",
 		"--id=" + workflowID,
 		"--title=" + workflowTitle,
 		"--description=" + description,
@@ -768,6 +775,14 @@ func executeWorkflowFormula(f *formula.Formula, formulaName, targetRig string) e
 		Stderr(os.Stderr).
 		Run(); err != nil {
 		return fmt.Errorf("creating workflow bead: %w", err)
+	}
+
+	// Fix issue_type to 'convoy' via SQL (bd create rejects --type=convoy).
+	if err := BdCmd(beads.ConvoyCreateFixType(workflowID)...).
+		WithAutoCommit().
+		Dir(townBeads).
+		Run(); err != nil {
+		return fmt.Errorf("setting convoy type: %w", err)
 	}
 
 	fmt.Printf("%s Created workflow: %s\n", style.Bold.Render("✓"), workflowID)

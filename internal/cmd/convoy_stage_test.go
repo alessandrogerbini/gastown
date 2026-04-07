@@ -1975,7 +1975,7 @@ func TestCreateStagedConvoy_DescriptionFormat(t *testing.T) {
 	lines := strings.Split(logContent, "\n")
 	var createLine string
 	for _, line := range lines {
-		if strings.Contains(line, "create") && strings.Contains(line, "--type=convoy") {
+		if strings.Contains(line, "create") && strings.Contains(line, "--type=task") {
 			createLine = line
 			break
 		}

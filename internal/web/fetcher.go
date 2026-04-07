@@ -208,8 +208,8 @@ func (f *LiveConvoyFetcher) FetchConvoys() ([]ConvoyRow, error) {
 		return nil, nil // Backed off — return empty result silently
 	}
 
-	// List all open convoy issues
-	stdout, err := f.runBdCmd(f.townRoot, "list", "--type=convoy", "--status=open", "--json")
+	// List all open convoy issues via SQL (bd list --type=convoy fails validation).
+	stdout, err := f.runBdCmd(f.townRoot, beads.ConvoyListSQLArgs("open", false, "")...)
 	if err != nil {
 		f.convoyBreaker.recordFailure()
 		return nil, fmt.Errorf("listing convoys: %w", err)

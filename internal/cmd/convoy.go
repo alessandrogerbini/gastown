@@ -695,7 +695,7 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 
 	createArgs := []string{
 		"create",
-		"--type=convoy",
+		"--type=task",
 		"--id=" + convoyID,
 		"--title=" + name,
 		"--description=" + description,
@@ -715,6 +715,14 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 		Stderr(&stderr).
 		Run(); err != nil {
 		return fmt.Errorf("creating convoy: %w (%s)", err, strings.TrimSpace(stderr.String()))
+	}
+
+	// Fix issue_type to 'convoy' via SQL (bd create rejects --type=convoy).
+	if err := BdCmd(beads.ConvoyCreateFixType(convoyID)...).
+		WithAutoCommit().
+		Dir(townBeads).
+		Run(); err != nil {
+		return fmt.Errorf("setting convoy type: %w", err)
 	}
 
 	// Notify address is stored in description (line 166-168) and read from there
@@ -1495,8 +1503,8 @@ func runConvoyStranded(cmd *cobra.Command, args []string) error {
 func findStrandedConvoys(townBeads string) ([]strandedConvoyInfo, error) {
 	stranded := []strandedConvoyInfo{} // Initialize as empty slice for proper JSON encoding
 
-	// List all open convoys
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--json")
+	// List all open convoys via SQL (bd list --type=convoy fails validation).
+	out, err := runBdJSON(townBeads, beads.ConvoyListSQLArgs("open", false, "")...)
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
@@ -1665,8 +1673,8 @@ func isSlingableBead(townRoot, beadID string) bool {
 func checkAndCloseCompletedConvoys(townBeads string, dryRun bool) ([]struct{ ID, Title string }, error) {
 	var closed []struct{ ID, Title string }
 
-	// List all open convoys
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--json")
+	// List all open convoys via SQL (bd list --type=convoy fails validation).
+	out, err := runBdJSON(townBeads, beads.ConvoyListSQLArgs("open", false, "")...)
 	if err != nil {
 		return nil, fmt.Errorf("listing convoys: %w", err)
 	}
@@ -1926,8 +1934,8 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 }
 
 func showAllConvoyStatus(townBeads string) error {
-	// List all convoy-type issues
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--status=open", "--json")
+	// List all convoy-type issues via SQL (bd list --type=convoy fails validation).
+	out, err := runBdJSON(townBeads, beads.ConvoyListSQLArgs("open", false, "")...)
 	if err != nil {
 		return fmt.Errorf("listing convoys: %w", err)
 	}
@@ -1973,14 +1981,8 @@ func runConvoyList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// List convoy-type issues.
-	listArgs := []string{"list", "--type=convoy", "--json"}
-	if convoyListStatus != "" {
-		listArgs = append(listArgs, "--status="+convoyListStatus)
-	} else if convoyListAll {
-		listArgs = append(listArgs, "--all")
-	}
-	// bd no longer requires --flat for JSON output.
+	// List convoy-type issues via SQL (bd list --type=convoy fails validation).
+	listArgs := beads.ConvoyListSQLArgs(convoyListStatus, convoyListAll, "")
 
 	out, err := runBdJSON(townBeads, listArgs...)
 	if err != nil {
@@ -2718,8 +2720,8 @@ func runConvoyTUI() error {
 // resolveConvoyNumber converts a numeric shortcut (1, 2, 3...) to a convoy ID.
 // Numbers correspond to the order shown in 'gt convoy list'.
 func resolveConvoyNumber(townBeads string, n int) (string, error) {
-	// Get convoy list (same query as runConvoyList)
-	out, err := runBdJSON(townBeads, "list", "--type=convoy", "--json")
+	// Get convoy list (same query as runConvoyList) via SQL.
+	out, err := runBdJSON(townBeads, beads.ConvoyListSQLArgs("", false, "")...)
 	if err != nil {
 		return "", fmt.Errorf("listing convoys: %w", err)
 	}
