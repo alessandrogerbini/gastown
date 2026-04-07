@@ -225,7 +225,7 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 			"--id=" + id,
 			"--title=" + title,
 			"--description=" + description,
-			"--type=agent",
+			"--type=task",
 			"--labels=gt:agent",
 		}
 		if NeedsForceForID(id) {
@@ -341,9 +341,9 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 	if err := target.Update(id, updateOpts); err != nil {
 		return nil, fmt.Errorf("updating agent bead: %w", err)
 	}
-	// Fix type separately — UpdateOptions doesn't support type changes
-	if _, err := target.run("update", id, "--type=agent"); err != nil {
-		return nil, fmt.Errorf("fixing agent bead type: %w", err)
+	// Ensure gt:agent label is present (type=task for upstream bd compatibility)
+	if _, err := target.run("update", id, "--add-label=gt:agent"); err != nil {
+		_ = err // Non-fatal: label may already exist
 	}
 
 	// Note: role slot no longer set - role definitions are config-based
@@ -424,6 +424,11 @@ func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 		target = NewWithBeadsDir(filepath.Dir(targetDir), targetDir)
 	}
 	return target.UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
+}
+
+// sanitizeSQL escapes single quotes for SQL string literals.
+func sanitizeSQL(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // SetHookBead and ClearHookBead removed (hq-l6mm5).
