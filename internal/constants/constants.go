@@ -2,6 +2,8 @@
 // Centralizing these magic strings improves maintainability and consistency.
 package constants
 
+// Smoke test: polecat lifecycle verified
+
 import "time"
 
 // Timing constants for session management and tmux operations.
