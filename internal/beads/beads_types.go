@@ -160,11 +160,17 @@ func EnsureCustomTypes(beadsDir string) error {
 	// database (redirect mismatch, stale metadata, server not running).
 	// Without this check, the sentinel file below would cache a lie,
 	// causing all future EnsureCustomTypes calls to skip re-configuration.
+	//
+	// We intentionally ignore the exec error from Output() and check only
+	// the stdout content. cmd.Output() returns an *exec.ExitError for
+	// non-zero exit codes, but stdout is still populated. Checking err
+	// first would short-circuit and reject valid output (gt-829).
 	verifyCmd := exec.Command("bd", "config", "get", "types.custom")
 	verifyCmd.Dir = beadsDir
 	verifyCmd.Env = bdEnv
 	util.SetDetachedProcessGroup(verifyCmd)
-	if verifyOutput, err := verifyCmd.Output(); err != nil || !strings.Contains(string(verifyOutput), "agent") {
+	verifyOutput, _ := verifyCmd.Output()
+	if !strings.Contains(string(verifyOutput), "agent") {
 		return fmt.Errorf("types.custom not persisted in %s after bd config set (verify returned %q): db may be misconfigured",
 			beadsDir, strings.TrimSpace(string(verifyOutput)))
 	}

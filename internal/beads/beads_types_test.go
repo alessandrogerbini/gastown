@@ -437,6 +437,69 @@ esac
 	})
 }
 
+func TestEnsureCustomTypes_VerifyNonZeroExitWithCorrectOutput(t *testing.T) {
+	// Regression test for gt-829: bd config get exits non-zero but stdout
+	// contains the correct types list. The old code checked err != nil first,
+	// which short-circuited and rejected valid output.
+	t.Run("non-zero exit with correct stdout succeeds", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("test uses Unix shell script mock for bd")
+		}
+		binDir := t.TempDir()
+		logPath := filepath.Join(binDir, "bd.log")
+		typesList := strings.Join(constants.BeadsCustomTypesList(), ",")
+		script := `#!/bin/sh
+LOG_FILE='` + logPath + `'
+printf '%s\n' "$*" >> "$LOG_FILE"
+cmd=""
+for arg in "$@"; do
+  case "$arg" in --*) ;; *) cmd="$arg"; break ;; esac
+done
+case "$cmd" in
+  init)
+    target="${BEADS_DIR:-$(pwd)/.beads}"
+    mkdir -p "$target/dolt"
+    printf 'prefix: gt\nissue-prefix: gt-\n' > "$target/config.yaml"
+    exit 0
+    ;;
+  config)
+    if echo "$*" | grep -q "get types.custom"; then
+      # Output correct value but exit non-zero (e.g., stderr warning)
+      echo "` + typesList + `"
+      exit 1
+    fi
+    exit 0
+    ;;
+  migrate) exit 0 ;;
+  *) exit 0 ;;
+esac
+`
+		if err := os.WriteFile(filepath.Join(binDir, "bd"), []byte(script), 0755); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+		tmpDir := t.TempDir()
+		beadsDir := filepath.Join(tmpDir, ".beads")
+		if err := os.MkdirAll(beadsDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		ResetEnsuredDirs()
+
+		err := EnsureCustomTypes(beadsDir)
+		if err != nil {
+			t.Fatalf("EnsureCustomTypes should succeed when stdout has correct types even with non-zero exit: %v", err)
+		}
+
+		// Sentinel file should have been written
+		sentinelPath := filepath.Join(beadsDir, typesSentinel)
+		if _, err := os.Stat(sentinelPath); os.IsNotExist(err) {
+			t.Error("sentinel file should exist when output contains correct types")
+		}
+	})
+}
+
 func TestEnsureCustomStatuses(t *testing.T) {
 	ResetEnsuredDirs()
 
