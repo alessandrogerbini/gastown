@@ -170,7 +170,7 @@ func EnsureCustomTypes(beadsDir string) error {
 	verifyCmd.Env = bdEnv
 	util.SetDetachedProcessGroup(verifyCmd)
 	verifyOutput, _ := verifyCmd.Output()
-	if !strings.Contains(string(verifyOutput), "agent") {
+	if !strings.Contains(string(verifyOutput), "convoy") {
 		return fmt.Errorf("types.custom not persisted in %s after bd config set (verify returned %q): db may be misconfigured",
 			beadsDir, strings.TrimSpace(string(verifyOutput)))
 	}
