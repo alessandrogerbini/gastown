@@ -151,8 +151,12 @@ func (m *Mailbox) listFromDir(beadsDir string) ([]*Message, error) {
 
 	identities := m.identityVariants()
 
+	// EnsureCustomTypes is best-effort for read operations. Types are only
+	// required when creating issues; querying existing messages works without
+	// them. Making this non-fatal prevents EnsureCustomTypes verification
+	// failures from blocking gt mail inbox (gt-829).
 	if err := beads.EnsureCustomTypes(beadsDir); err != nil {
-		return nil, fmt.Errorf("ensuring custom types: %w", err)
+		fmt.Fprintf(os.Stderr, "Warning: ensuring custom types: %v\n", err)
 	}
 
 	// Deduplicate messages across queries (assignee + CC may overlap)
