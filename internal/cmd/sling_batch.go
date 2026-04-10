@@ -87,10 +87,6 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 	fmt.Printf("%s Batch slinging %d beads to rig '%s'...\n", style.Bold.Render("🎯"), len(beadIDs), rigName)
 
-	if slingMaxConcurrent > 0 {
-		fmt.Printf("  Max concurrent spawns: %d\n", slingMaxConcurrent)
-	}
-
 	// Cook formula once before the loop for efficiency
 	townRoot := filepath.Dir(townBeadsDir)
 	formulaCooked := false
@@ -112,9 +108,9 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 		polecat string
 		success bool
 		errMsg  string
+		skipped bool
 	}
 	results := make([]batchResult, 0, len(beadIDs))
-	activeCount := 0 // Track active spawns for --max-concurrent throttling
 
 	var slingMode string
 	if slingRalph {
@@ -123,22 +119,6 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 	// Dispatch each bead via executeSling
 	for i, beadID := range beadIDs {
-		// Admission control: throttle spawns when --max-concurrent is set
-		if slingMaxConcurrent > 0 && activeCount >= slingMaxConcurrent {
-			fmt.Printf("\n%s Max concurrent limit reached (%d), waiting for capacity...\n",
-				style.Warning.Render("⏳"), slingMaxConcurrent)
-			// Wait for sessions to settle before spawning more
-			for wait := 0; wait < 30; wait++ {
-				time.Sleep(2 * time.Second)
-				if wait >= 2 {
-					break
-				}
-			}
-			// Reset counter after cooldown — polecats become self-sufficient
-			// quickly, so we use time-based batching rather than precise counting
-			activeCount = 0
-		}
-
 		fmt.Printf("\n[%d/%d] Slinging %s...\n", i+1, len(beadIDs), beadID)
 
 		params := SlingParams{
@@ -179,12 +159,18 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 			if result != nil {
 				polecatName = result.PolecatName
 			}
-			results = append(results, batchResult{beadID: beadID, polecat: polecatName, success: false, errMsg: errMsg})
-			fmt.Printf("  %s %s\n", style.Dim.Render("✗"), errMsg)
+			// Distinguish cap-rejected beads from other failures
+			skipped := strings.Contains(errMsg, "too many working polecats") ||
+				strings.Contains(errMsg, "max active polecats")
+			results = append(results, batchResult{beadID: beadID, polecat: polecatName, success: false, errMsg: errMsg, skipped: skipped})
+			if skipped {
+				fmt.Printf("  %s skipped (capacity limit): %s\n", style.Dim.Render("⏭"), beadID)
+			} else {
+				fmt.Printf("  %s %s\n", style.Dim.Render("✗"), errMsg)
+			}
 			continue
 		}
 
-		activeCount++
 		results = append(results, batchResult{beadID: beadID, polecat: result.PolecatName, success: true})
 
 		// Delay between spawns to prevent Dolt lock contention — sequential
@@ -201,17 +187,32 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 
 	// Print summary
 	successCount := 0
+	skippedCount := 0
 	for _, r := range results {
 		if r.success {
 			successCount++
+		} else if r.skipped {
+			skippedCount++
 		}
 	}
 
-	fmt.Printf("\n%s Batch sling complete: %d/%d succeeded\n", style.Bold.Render("📊"), successCount, len(beadIDs))
-	if successCount < len(beadIDs) {
+	fmt.Printf("\n%s Batch sling complete: %d/%d succeeded", style.Bold.Render("📊"), successCount, len(beadIDs))
+	if skippedCount > 0 {
+		fmt.Printf(", %d skipped (capacity limit)", skippedCount)
+	}
+	fmt.Println()
+
+	if successCount+skippedCount < len(beadIDs) {
 		for _, r := range results {
-			if !r.success {
+			if !r.success && !r.skipped {
 				fmt.Printf("  %s %s: %s\n", style.Dim.Render("✗"), r.beadID, r.errMsg)
+			}
+		}
+	}
+	if skippedCount > 0 {
+		for _, r := range results {
+			if r.skipped {
+				fmt.Printf("  %s %s: %s\n", style.Dim.Render("⏭"), r.beadID, r.errMsg)
 			}
 		}
 	}
