@@ -174,6 +174,128 @@ func TestIsRuntimePath(t *testing.T) {
 	}
 }
 
+// initGitRepoWithRemote creates a git repo with a bare "origin" remote.
+// Returns (workDir, bareDir).
+func initGitRepoWithRemote(t *testing.T) (string, string) {
+	t.Helper()
+
+	// Create bare repo as remote.
+	bare := t.TempDir()
+	run(t, bare, "git", "init", "--bare", "--initial-branch=main")
+
+	// Create working repo.
+	dir := t.TempDir()
+	cmds := [][]string{
+		{"git", "init", "--initial-branch=main"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+		{"git", "remote", "add", "origin", bare},
+		{"git", "commit", "--allow-empty", "-m", "initial"},
+		{"git", "push", "-u", "origin", "main"},
+	}
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v failed: %s: %v", args, out, err)
+		}
+	}
+	return dir, bare
+}
+
+func TestCheckpointAndPush_CleanRepo(t *testing.T) {
+	dir, _ := initGitRepoWithRemote(t)
+
+	committed, pushed, err := CheckpointAndPush(dir, "origin")
+	if err != nil {
+		t.Fatalf("CheckpointAndPush: %v", err)
+	}
+	if committed || pushed {
+		t.Errorf("expected no action for clean repo, got committed=%v pushed=%v", committed, pushed)
+	}
+}
+
+func TestCheckpointAndPush_DirtyWorktree(t *testing.T) {
+	dir, bare := initGitRepoWithRemote(t)
+
+	// Switch to a polecat branch.
+	run(t, dir, "git", "checkout", "-b", "polecat/alpha")
+
+	// Create uncommitted work.
+	if err := os.WriteFile(filepath.Join(dir, "work.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, pushed, err := CheckpointAndPush(dir, "origin")
+	if err != nil {
+		t.Fatalf("CheckpointAndPush: %v", err)
+	}
+	if !committed {
+		t.Error("expected committed=true")
+	}
+	if !pushed {
+		t.Error("expected pushed=true")
+	}
+
+	// Verify the branch was pushed to the bare remote.
+	out := runOutput(t, bare, "git", "branch")
+	if !filepath.IsAbs(bare) {
+		t.Skip("bare dir not absolute")
+	}
+	cmd := exec.Command("git", "branch", "--list", "polecat/alpha")
+	cmd.Dir = bare
+	branchOut, _ := cmd.CombinedOutput()
+	if len(branchOut) == 0 {
+		t.Error("expected polecat/alpha branch on remote")
+	}
+	_ = out
+}
+
+func TestCheckpointAndPush_UnpushedCommitsOnly(t *testing.T) {
+	dir, _ := initGitRepoWithRemote(t)
+
+	// Switch to a polecat branch.
+	run(t, dir, "git", "checkout", "-b", "polecat/beta")
+
+	// Create a committed but unpushed change.
+	if err := os.WriteFile(filepath.Join(dir, "done.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run(t, dir, "git", "add", "done.go")
+	run(t, dir, "git", "commit", "-m", "add done.go")
+
+	committed, pushed, err := CheckpointAndPush(dir, "origin")
+	if err != nil {
+		t.Fatalf("CheckpointAndPush: %v", err)
+	}
+	if committed {
+		t.Error("expected committed=false (nothing dirty)")
+	}
+	if !pushed {
+		t.Error("expected pushed=true (unpushed commit)")
+	}
+}
+
+func TestCheckpointAndPush_SkipsMainBranch(t *testing.T) {
+	dir, _ := initGitRepoWithRemote(t)
+
+	// Create uncommitted work on main.
+	if err := os.WriteFile(filepath.Join(dir, "oops.go"), []byte("package main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	committed, pushed, err := CheckpointAndPush(dir, "origin")
+	if err != nil {
+		t.Fatalf("CheckpointAndPush: %v", err)
+	}
+	if !committed {
+		t.Error("expected committed=true (dirty files)")
+	}
+	if pushed {
+		t.Error("expected pushed=false (should not push main)")
+	}
+}
+
 func run(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command(args[0], args[1:]...)

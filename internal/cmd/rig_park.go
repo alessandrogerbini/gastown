@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
@@ -18,6 +19,8 @@ const RigStatusKey = "status"
 // RigStatusParked is the value indicating a rig is parked.
 const RigStatusParked = "parked"
 
+var rigParkForce bool
+
 var rigParkCmd = &cobra.Command{
 	Use:   "park <rig>...",
 	Short: "Park one or more rigs (stops agents, daemon won't auto-restart)",
@@ -29,6 +32,12 @@ Parking a rig:
   - Sets status=parked in the wisp layer (local/ephemeral)
   - The daemon respects this status and won't auto-restart agents
 
+With --force:
+  - Checkpoints (commits) uncommitted work in each polecat worktree
+  - Pushes each polecat's branch to the remote
+  - Stops all polecat sessions
+  - Then parks normally
+
 This is a Level 1 (local/ephemeral) operation:
   - Only affects this town
   - Disappears on wisp cleanup
@@ -36,6 +45,7 @@ This is a Level 1 (local/ephemeral) operation:
 
 Examples:
   gt rig park gastown
+  gt rig park --force gastown
   gt rig park beads gastown mayor`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: runRigPark,
@@ -61,6 +71,8 @@ Examples:
 func init() {
 	rigCmd.AddCommand(rigParkCmd)
 	rigCmd.AddCommand(rigUnparkCmd)
+
+	rigParkCmd.Flags().BoolVarP(&rigParkForce, "force", "f", false, "Checkpoint and push dirty polecat branches, then stop all polecat sessions before parking")
 }
 
 func runRigPark(cmd *cobra.Command, args []string) error {
@@ -82,6 +94,10 @@ func runRigPark(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+// checkpointAndPushFn is the function used to checkpoint and push a polecat worktree.
+// Overridable for testing.
+var checkpointAndPushFn = polecat.CheckpointAndPush
+
 func parkOneRig(rigName string) error {
 	// Get rig and town root
 	townRoot, r, err := getRig(rigName)
@@ -94,6 +110,42 @@ func parkOneRig(rigName string) error {
 	var stoppedAgents []string
 
 	t := tmux.NewTmux()
+
+	// --force: checkpoint+push dirty polecat branches, then stop sessions
+	if rigParkForce {
+		polecatMgr := polecat.NewSessionManager(t, r)
+		polecatInfos, err := polecatMgr.ListPolecats()
+		if err == nil && len(polecatInfos) > 0 {
+			fmt.Printf("  Checkpointing %d polecat(s)...\n", len(polecatInfos))
+			for _, info := range polecatInfos {
+				workDir := polecatMgr.ClonePath(info.Polecat)
+				committed, pushed, cpErr := checkpointAndPushFn(workDir, "origin")
+				if cpErr != nil {
+					fmt.Printf("  %s %s: checkpoint+push failed: %v\n",
+						style.Warning.Render("!"), info.Polecat, cpErr)
+					continue
+				}
+				if committed || pushed {
+					action := ""
+					if committed && pushed {
+						action = "committed + pushed"
+					} else if committed {
+						action = "committed (push skipped)"
+					} else {
+						action = "pushed"
+					}
+					fmt.Printf("  %s %s: %s\n", style.Success.Render("✓"), info.Polecat, action)
+				}
+			}
+
+			fmt.Printf("  Stopping %d polecat session(s)...\n", len(polecatInfos))
+			if err := polecatMgr.StopAll(false); err != nil {
+				fmt.Printf("  %s Failed to stop polecat sessions: %v\n", style.Warning.Render("!"), err)
+			} else {
+				stoppedAgents = append(stoppedAgents, fmt.Sprintf("%d polecat session(s) stopped", len(polecatInfos)))
+			}
+		}
+	}
 
 	// Stop witness if running
 	witnessSession := session.WitnessSessionName(session.PrefixFor(rigName))

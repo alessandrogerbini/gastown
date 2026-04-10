@@ -94,6 +94,45 @@ func hasStagedChanges(g *git.Git) (bool, error) {
 	return hasChanges, nil
 }
 
+// CheckpointAndPush checkpoints any dirty changes in the worktree and pushes
+// the current branch to the remote. Returns (committed, pushed, error).
+// If the worktree is clean but has unpushed commits, it pushes those.
+func CheckpointAndPush(workDir, remote string) (committed bool, pushed bool, err error) {
+	g := git.NewGit(workDir)
+
+	// Checkpoint dirty changes first.
+	committed, err = CheckpointWorktree(workDir)
+	if err != nil {
+		return false, false, fmt.Errorf("checkpoint: %w", err)
+	}
+
+	// Get current branch.
+	branch, err := g.CurrentBranch()
+	if err != nil {
+		return committed, false, fmt.Errorf("current branch: %w", err)
+	}
+
+	// Don't push if on main/master — polecat branches only.
+	if branch == "main" || branch == "master" || branch == "HEAD" {
+		return committed, false, nil
+	}
+
+	// Check for unpushed commits (including any we just created).
+	// Polecat branches typically lack upstream tracking, so UnpushedCommits
+	// returns 0. Use CommitsAhead(origin/main, HEAD) as the reliable check.
+	unpushed, _ := g.CommitsAhead("origin/main", "HEAD")
+	if unpushed == 0 {
+		return committed, false, nil
+	}
+
+	// Push the branch.
+	if err := g.Push(remote, branch, false); err != nil {
+		return committed, false, fmt.Errorf("push %s to %s: %w", branch, remote, err)
+	}
+
+	return committed, true, nil
+}
+
 // isRuntimePath returns true if the file path falls under one of the
 // runtime exclude directories.
 func isRuntimePath(path string) bool {

@@ -174,6 +174,12 @@ func (m *SessionManager) clonePath(polecat string) string {
 	return newPath
 }
 
+// ClonePath returns the git worktree path for a polecat.
+// Exported wrapper around clonePath for use by rig commands.
+func (m *SessionManager) ClonePath(polecat string) string {
+	return m.clonePath(polecat)
+}
+
 // freshBranchName returns a unique branch name for a new polecat session.
 // Mirrors the naming convention in Manager.buildBranchName:
 //   - polecat/<name>/<issue>@<timestamp> when an issue is known
