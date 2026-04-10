@@ -731,6 +731,17 @@ func (g *Git) HasUncommittedChanges() (bool, error) {
 	return !status.Clean, nil
 }
 
+// HasStagedChanges returns true if the index has staged changes relative to HEAD.
+// Uses `git diff --cached --quiet` which exits non-zero when there are staged diffs.
+func (g *Git) HasStagedChanges() (bool, error) {
+	_, err := g.run("diff", "--cached", "--quiet")
+	if err != nil {
+		// diff --quiet exits 1 when there ARE differences — that's the "true" case.
+		return true, nil
+	}
+	return false, nil
+}
+
 // RemoteURL returns the URL for the given remote.
 func (g *Git) RemoteURL(remote string) (string, error) {
 	return g.run("remote", "get-url", remote)

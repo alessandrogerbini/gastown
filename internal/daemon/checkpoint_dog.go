@@ -1,16 +1,12 @@
 package daemon
 
 import (
-	"bytes"
-	"fmt"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/session"
-	"github.com/steveyegge/gastown/internal/util"
 )
 
 const (
@@ -36,15 +32,6 @@ func checkpointDogInterval(config *DaemonPatrolConfig) time.Duration {
 		}
 	}
 	return defaultCheckpointDogInterval
-}
-
-// runtimeExcludeDirs are directories to unstage after git add -A.
-// These contain runtime/ephemeral data that should not be checkpointed.
-var runtimeExcludeDirs = []string{
-	".claude/",
-	".beads/",
-	".runtime/",
-	"__pycache__/",
 }
 
 // runCheckpointDog auto-commits WIP changes in active polecat worktrees.
@@ -119,65 +106,16 @@ func (d *Daemon) checkpointRigPolecats(rigName string) (int, int) {
 }
 
 // checkpointWorktree creates a WIP checkpoint commit for a single worktree.
+// Delegates to polecat.CheckpointWorktree for the actual git operations.
 // Returns true if a checkpoint was created.
 func (d *Daemon) checkpointWorktree(workDir, rigName, polecatName string) bool {
-	// Check git status (exclude runtime dirs from consideration)
-	statusOut, err := runGitCmd(workDir, "status", "--porcelain")
+	created, err := polecat.CheckpointWorktree(workDir)
 	if err != nil {
-		d.logger.Printf("checkpoint_dog: git status failed in %s/%s: %v", rigName, polecatName, err)
+		d.logger.Printf("checkpoint_dog: checkpoint failed in %s/%s: %v", rigName, polecatName, err)
 		return false
 	}
-	if strings.TrimSpace(statusOut) == "" {
-		return false // Clean worktree
+	if created {
+		d.logger.Printf("checkpoint_dog: created WIP checkpoint in %s/%s", rigName, polecatName)
 	}
-
-	// Stage everything
-	if _, err := runGitCmd(workDir, "add", "-A"); err != nil {
-		d.logger.Printf("checkpoint_dog: git add -A failed in %s/%s: %v", rigName, polecatName, err)
-		return false
-	}
-
-	// Unstage runtime/ephemeral directories
-	for _, dir := range runtimeExcludeDirs {
-		// git reset HEAD -- <dir> is safe even if dir doesn't exist (exits 0)
-		_, _ = runGitCmd(workDir, "reset", "HEAD", "--", dir)
-	}
-
-	// Check if anything is staged after exclusions
-	diffOut, err := runGitCmd(workDir, "diff", "--cached", "--quiet")
-	if err == nil && strings.TrimSpace(diffOut) == "" {
-		// --quiet exits 0 if no diff → nothing staged
-		return false
-	}
-
-	// Commit the checkpoint
-	if _, err := runGitCmd(workDir, "commit", "-m", "WIP: checkpoint (auto)"); err != nil {
-		d.logger.Printf("checkpoint_dog: git commit failed in %s/%s: %v", rigName, polecatName, err)
-		return false
-	}
-
-	d.logger.Printf("checkpoint_dog: created WIP checkpoint in %s/%s", rigName, polecatName)
-	return true
-}
-
-// runGitCmd executes a git command in the given directory and returns stdout.
-func runGitCmd(workDir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = workDir
-	util.SetDetachedProcessGroup(cmd)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg != "" {
-			return "", fmt.Errorf("%s: %s", err, errMsg)
-		}
-		return "", err
-	}
-
-	return strings.TrimSpace(stdout.String()), nil
+	return created
 }
