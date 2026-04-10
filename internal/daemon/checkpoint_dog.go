@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -118,11 +119,58 @@ func (d *Daemon) checkpointRigPolecats(rigName string) (int, int) {
 	return scanned, checkpointed
 }
 
+// findPolecatGitRoot finds the git worktree root within a polecat directory.
+// New structure: polecats/<name>/<rigname>/ — git root is at the rig subdirectory.
+// Old structure: polecats/<name>/ — git root is the polecat directory itself.
+// Returns "" if no git root is found.
+func findPolecatGitRoot(polecatDir, rigName string) string {
+	// New structure: polecats/<name>/<rigname>/.git
+	newPath := filepath.Join(polecatDir, rigName)
+	if _, err := os.Stat(filepath.Join(newPath, ".git")); err == nil {
+		return newPath
+	}
+
+	// Old structure: polecats/<name>/.git
+	if _, err := os.Stat(filepath.Join(polecatDir, ".git")); err == nil {
+		return polecatDir
+	}
+
+	// Fallback: scan immediate subdirectories for a .git entry.
+	// Handles rigs where the repo name differs from the rig name.
+	entries, err := os.ReadDir(polecatDir)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		candidate := filepath.Join(polecatDir, entry.Name())
+		if _, err := os.Stat(filepath.Join(candidate, ".git")); err == nil {
+			return candidate
+		}
+	}
+
+	return ""
+}
+
 // checkpointWorktree creates a WIP checkpoint commit for a single worktree.
 // Returns true if a checkpoint was created.
 func (d *Daemon) checkpointWorktree(workDir, rigName, polecatName string) bool {
+	gitRoot := findPolecatGitRoot(workDir, rigName)
+	if gitRoot == "" {
+		d.logger.Printf("checkpoint_dog: no git root found in %s/%s", rigName, polecatName)
+		return false
+	}
+
+	return d.commitWIPCheckpoint(gitRoot, rigName, polecatName)
+}
+
+// commitWIPCheckpoint creates a WIP commit in the given git directory.
+// Returns true if a checkpoint commit was created.
+func (d *Daemon) commitWIPCheckpoint(gitRoot, rigName, polecatName string) bool {
 	// Check git status (exclude runtime dirs from consideration)
-	statusOut, err := runGitCmd(workDir, "status", "--porcelain")
+	statusOut, err := runGitCmd(gitRoot, "status", "--porcelain")
 	if err != nil {
 		d.logger.Printf("checkpoint_dog: git status failed in %s/%s: %v", rigName, polecatName, err)
 		return false
@@ -132,7 +180,7 @@ func (d *Daemon) checkpointWorktree(workDir, rigName, polecatName string) bool {
 	}
 
 	// Stage everything
-	if _, err := runGitCmd(workDir, "add", "-A"); err != nil {
+	if _, err := runGitCmd(gitRoot, "add", "-A"); err != nil {
 		d.logger.Printf("checkpoint_dog: git add -A failed in %s/%s: %v", rigName, polecatName, err)
 		return false
 	}
@@ -140,23 +188,68 @@ func (d *Daemon) checkpointWorktree(workDir, rigName, polecatName string) bool {
 	// Unstage runtime/ephemeral directories
 	for _, dir := range runtimeExcludeDirs {
 		// git reset HEAD -- <dir> is safe even if dir doesn't exist (exits 0)
-		_, _ = runGitCmd(workDir, "reset", "HEAD", "--", dir)
+		_, _ = runGitCmd(gitRoot, "reset", "HEAD", "--", dir)
 	}
 
 	// Check if anything is staged after exclusions
-	diffOut, err := runGitCmd(workDir, "diff", "--cached", "--quiet")
+	diffOut, err := runGitCmd(gitRoot, "diff", "--cached", "--quiet")
 	if err == nil && strings.TrimSpace(diffOut) == "" {
 		// --quiet exits 0 if no diff → nothing staged
 		return false
 	}
 
 	// Commit the checkpoint
-	if _, err := runGitCmd(workDir, "commit", "-m", "WIP: checkpoint (auto)"); err != nil {
+	if _, err := runGitCmd(gitRoot, "commit", "-m", "WIP: checkpoint (auto)"); err != nil {
 		d.logger.Printf("checkpoint_dog: git commit failed in %s/%s: %v", rigName, polecatName, err)
 		return false
 	}
 
 	d.logger.Printf("checkpoint_dog: created WIP checkpoint in %s/%s", rigName, polecatName)
+	return true
+}
+
+// CheckpointAndPushWorktree commits any dirty WIP in a polecat worktree and
+// pushes the branch to origin. This preserves work from dead sessions before
+// the worktree is cleaned up (crash recovery or idle reap).
+//
+// Returns true if work was preserved (committed and/or pushed).
+func (d *Daemon) CheckpointAndPushWorktree(polecatDir, rigName, polecatName string) bool {
+	gitRoot := findPolecatGitRoot(polecatDir, rigName)
+	if gitRoot == "" {
+		d.logger.Printf("checkpoint_dog: preserve: no git root found in %s/%s", rigName, polecatName)
+		return false
+	}
+
+	// Step 1: commit any dirty work
+	committed := d.commitWIPCheckpoint(gitRoot, rigName, polecatName)
+
+	// Step 2: determine the current branch
+	branch, err := runGitCmd(gitRoot, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		d.logger.Printf("checkpoint_dog: preserve: cannot determine branch in %s/%s: %v", rigName, polecatName, err)
+		return committed
+	}
+
+	// Don't push if on main/master — that would be dangerous
+	if branch == "main" || branch == "master" || branch == "HEAD" {
+		d.logger.Printf("checkpoint_dog: preserve: skipping push for %s/%s (on branch %s)", rigName, polecatName, branch)
+		return committed
+	}
+
+	// Step 3: check if there are commits to push (any commits ahead of origin/main)
+	logOut, err := runGitCmd(gitRoot, "log", "--oneline", "origin/main..HEAD")
+	if err != nil || strings.TrimSpace(logOut) == "" {
+		// No commits ahead of main — nothing to push
+		return committed
+	}
+
+	// Step 4: push the branch to origin
+	if _, err := runGitCmd(gitRoot, "push", "origin", branch, "--force-with-lease"); err != nil {
+		d.logger.Printf("checkpoint_dog: preserve: git push failed in %s/%s: %v", rigName, polecatName, err)
+		return committed
+	}
+
+	d.logger.Printf("checkpoint_dog: preserved WIP for dead session %s/%s — pushed branch %s to origin", rigName, polecatName, branch)
 	return true
 }
 

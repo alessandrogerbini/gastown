@@ -2375,6 +2375,11 @@ func (d *Daemon) checkPolecatHealth(rigName, polecatName string) {
 	d.logger.Printf("CRASH DETECTED: polecat %s/%s has hook_bead=%s but session %s is dead",
 		rigName, polecatName, info.HookBead, sessionName)
 
+	// Preserve WIP: commit and push any dirty work before cleanup/restart.
+	// The session is dead so no concurrent git operations are possible.
+	polecatDir := filepath.Join(d.config.TownRoot, rigName, "polecats", polecatName)
+	d.CheckpointAndPushWorktree(polecatDir, rigName, polecatName)
+
 	// Track this death for mass death detection
 	d.recordSessionDeath(sessionName)
 
@@ -2619,6 +2624,10 @@ func (d *Daemon) reapIdlePolecat(rigName, polecatName string, timeout time.Durat
 func (d *Daemon) killIdlePolecat(rigName, polecatName, sessionName string, idleDuration, timeout time.Duration, reason string) {
 	d.logger.Printf("Reaping idle polecat %s/%s (state=%s, idle %v, threshold %v)",
 		rigName, polecatName, reason, idleDuration.Truncate(time.Second), timeout)
+
+	// Preserve WIP: commit and push any dirty work before killing the session.
+	polecatDir := filepath.Join(d.config.TownRoot, rigName, "polecats", polecatName)
+	d.CheckpointAndPushWorktree(polecatDir, rigName, polecatName)
 
 	// Kill the tmux session (and all descendant processes)
 	if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
