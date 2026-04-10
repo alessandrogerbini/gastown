@@ -116,8 +116,8 @@ The convoy ID and merge strategy are stored on each bead via
 `beadFieldUpdates`, so `gt done` can find the convoy via the fast path.
 
 There is no upper limit on the number of beads. `gt sling <10 beads>`
-spawns 10 polecats sharing 1 convoy. The only throttle is
-`--max-concurrent` (default 0 = unlimited).
+spawns 10 polecats sharing 1 convoy. The global polecat cap in
+`polecat_spawn.go` is the enforcement point for spawn limits.
 
 ### Rig resolution errors
 

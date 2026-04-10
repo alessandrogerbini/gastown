@@ -153,7 +153,7 @@ func runEpicScheduleByID(epicID string, opts epicScheduleOpts) error {
 
 // runEpicSlingByID immediately dispatches all open children of an epic.
 // Used when max_polecats=-1 (direct dispatch mode). Each child gets its own
-// polecat via executeSling(). Respects --max-concurrent throttling.
+// polecat via executeSling().
 func runEpicSlingByID(epicID string, opts epicScheduleOpts) error {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
@@ -235,11 +235,6 @@ func runEpicSlingByID(epicID string, opts epicScheduleOpts) error {
 	successCount := 0
 	successfulRigs := make(map[string]bool)
 	for i, c := range candidates {
-		if slingMaxConcurrent > 0 && i >= slingMaxConcurrent {
-			fmt.Printf("  %s Reached --max-concurrent limit (%d)\n", style.Dim.Render("○"), slingMaxConcurrent)
-			break
-		}
-
 		fmt.Printf("\n[%d/%d] Dispatching %s → %s...\n", i+1, len(candidates), c.ID, c.RigName)
 		_, err := executeSling(SlingParams{
 			BeadID:        c.ID,

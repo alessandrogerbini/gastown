@@ -233,11 +233,6 @@ func runConvoySlingByID(convoyID string, opts convoyScheduleOpts) error {
 	successCount := 0
 	successfulRigs := make(map[string]bool)
 	for i, c := range candidates {
-		if slingMaxConcurrent > 0 && i >= slingMaxConcurrent {
-			fmt.Printf("  %s Reached --max-concurrent limit (%d)\n", style.Dim.Render("○"), slingMaxConcurrent)
-			break
-		}
-
 		fmt.Printf("\n[%d/%d] Dispatching %s → %s...\n", i+1, len(candidates), c.ID, c.RigName)
 		_, err := executeSling(SlingParams{
 			BeadID:        c.ID,
